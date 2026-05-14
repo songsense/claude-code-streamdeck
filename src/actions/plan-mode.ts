@@ -13,15 +13,15 @@ import {
   type PermissionMode,
 } from "../lib/session-mode.js";
 
-// Step the Shift+Tab cycle until the active Claude session's session log
-// reports the desired mode. The cycle below mirrors Claude Code's UI:
-// default → acceptEdits (a.k.a. "auto") → plan → default. If Claude Code
-// changes its order or adds a mode, update CYCLE — no other code change.
+// Step the Shift+Tab cycle until the focused Claude session's permission-mode
+// event log reports the target mode. Cycle mirrors Claude Code's UI:
+// default → acceptEdits → plan → default. Update CYCLE if Claude Code ever
+// reorders or adds a mode — the stepUntil loop adapts automatically.
 const CYCLE = ["default", "acceptEdits", "plan"] as const;
 type CycleMode = (typeof CYCLE)[number];
 
-const STEP_DELAY_MS = 70;
-const REFRESH_MS = 4_000;
+const STEP_DELAY_MS = 80;
+const REFRESH_MS = 2_500;
 const MAX_STEPS = CYCLE.length + 1;
 
 type TargetMode = "plan" | "auto";
@@ -73,14 +73,14 @@ export class PlanMode extends SingletonAction {
   }
 
   override async onKeyDown(ev: KeyDownEvent): Promise<void> {
-    const detected = normalize(detectCurrentMode());
-    const targetDisplay: TargetMode = detected === "plan" ? "auto" : "plan";
+    const detected = await detectCurrentMode();
+    const current = normalize(detected.mode);
+    // If we're already at default/unknown, default toggle direction is → plan.
+    const targetDisplay: TargetMode = current === "plan" ? "auto" : "plan";
     const targetCycle = targetCycleMode(targetDisplay);
 
-    await stepUntil(detected, targetCycle);
+    await stepUntil(current, targetCycle);
 
-    // Optimistically render the target while we wait for the next session-log
-    // poll to confirm — keeps the key feeling responsive.
     if (ev.action.isKey()) {
       await ev.action.setImage(tileForMode(targetDisplay));
       await ev.action.setTitle("");
@@ -92,8 +92,10 @@ export class PlanMode extends SingletonAction {
   }
 
   private async render(target: KeyAction): Promise<void> {
-    const detected = detectCurrentMode();
-    const display = detected ? toDisplay(normalize(detected)) : "unknown";
+    const detected = await detectCurrentMode();
+    const display = detected.mode
+      ? toDisplay(normalize(detected.mode))
+      : "unknown";
     await target.setImage(tileForMode(display));
     await target.setTitle("");
   }

@@ -1,6 +1,10 @@
+import { execFile } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export type PermissionMode =
   | "plan"
@@ -9,16 +13,124 @@ export type PermissionMode =
   | "default"
   | "bypassPermissions";
 
-const PROJECTS_ROOT = join(homedir(), ".claude", "projects");
-const TAIL_BYTES = 64 * 1024; // 64 KB is more than enough to find the last mode event
+const CLAUDE_HOME = join(homedir(), ".claude");
+const SESSIONS_DIR = join(CLAUDE_HOME, "sessions");
+const PROJECTS_ROOT = join(CLAUDE_HOME, "projects");
+const TAIL_BYTES = 64 * 1024;
+
+interface SessionMeta {
+  pid: number;
+  sessionId: string;
+  cwd?: string;
+  updatedAt?: number;
+  status?: string;
+  kind?: string;
+}
+
+function readAllSessionMeta(): SessionMeta[] {
+  let files: string[];
+  try {
+    files = readdirSync(SESSIONS_DIR).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out: SessionMeta[] = [];
+  for (const f of files) {
+    try {
+      const data = JSON.parse(readFileSync(join(SESSIONS_DIR, f), "utf8"));
+      if (typeof data?.pid === "number" && typeof data?.sessionId === "string") {
+        out.push(data as SessionMeta);
+      }
+    } catch {
+      /* skip malformed */
+    }
+  }
+  return out;
+}
 
 /**
- * Return the path of the most-recently-modified .jsonl session log. We treat
- * this as the "active" session — the one the user most likely just touched in
- * a focused terminal.
+ * Ask System Events for the unix PID of the frontmost process. Returns null
+ * if the AppleScript fails (e.g. accessibility not granted).
  */
-export function findActiveSessionJsonl(): string | null {
-  let best: { path: string; mtimeMs: number } | null = null;
+async function getFrontmostPid(): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "/usr/bin/osascript",
+      [
+        "-e",
+        'tell application "System Events" to return unix id of first process whose frontmost is true',
+      ],
+      { timeout: 2000 },
+    );
+    const pid = parseInt(stdout.trim(), 10);
+    return Number.isFinite(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build a pid → children map by parsing `ps -axo pid,ppid`, then return the
+ * transitive descendant set of `rootPid` (including itself).
+ */
+async function getDescendantPids(rootPid: number): Promise<Set<number>> {
+  const out = await execFileAsync("/bin/ps", ["-axo", "pid=,ppid="], {
+    timeout: 3000,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  const children = new Map<number, number[]>();
+  for (const line of out.stdout.split("\n")) {
+    const m = line.trim().match(/^(\d+)\s+(\d+)/);
+    if (!m) continue;
+    const pid = parseInt(m[1]!, 10);
+    const ppid = parseInt(m[2]!, 10);
+    if (!children.has(ppid)) children.set(ppid, []);
+    children.get(ppid)!.push(pid);
+  }
+  const out_set = new Set<number>([rootPid]);
+  const stack = [rootPid];
+  while (stack.length) {
+    const p = stack.pop()!;
+    for (const k of children.get(p) ?? []) {
+      if (!out_set.has(k)) {
+        out_set.add(k);
+        stack.push(k);
+      }
+    }
+  }
+  return out_set;
+}
+
+/**
+ * Pick the Claude session whose PID is a descendant of the frontmost app.
+ * If multiple match (e.g. multiple terminal tabs), choose the most-recently
+ * updated. Returns null if none match.
+ */
+export async function findFocusedSession(): Promise<SessionMeta | null> {
+  const frontPid = await getFrontmostPid();
+  if (!frontPid) return null;
+  const descendants = await getDescendantPids(frontPid);
+  const sessions = readAllSessionMeta().filter(
+    (s) => s.kind !== "headless" && descendants.has(s.pid),
+  );
+  if (sessions.length === 0) return null;
+  sessions.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  return sessions[0]!;
+}
+
+/**
+ * Fallback when no focused session is detectable: pick the interactive
+ * session with the most-recent updatedAt. Less accurate but always returns
+ * something if any claude is running.
+ */
+function fallbackSession(): SessionMeta | null {
+  const sessions = readAllSessionMeta().filter((s) => s.kind !== "headless");
+  if (sessions.length === 0) return null;
+  sessions.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  return sessions[0]!;
+}
+
+function findJsonlForSession(sessionId: string): string | null {
   let projects: string[];
   try {
     projects = readdirSync(PROJECTS_ROOT, { withFileTypes: true })
@@ -27,47 +139,38 @@ export function findActiveSessionJsonl(): string | null {
   } catch {
     return null;
   }
+  let best: { path: string; mtimeMs: number } | null = null;
   for (const dir of projects) {
-    let files;
+    const candidate = join(dir, `${sessionId}.jsonl`);
     try {
-      files = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const f of files) {
-      if (!f.isFile() || !f.name.endsWith(".jsonl")) continue;
-      const p = join(dir, f.name);
-      try {
-        const s = statSync(p);
-        if (!best || s.mtimeMs > best.mtimeMs) best = { path: p, mtimeMs: s.mtimeMs };
-      } catch {
-        /* skip */
+      const s = statSync(candidate);
+      if (!best || s.mtimeMs > best.mtimeMs) {
+        best = { path: candidate, mtimeMs: s.mtimeMs };
       }
+    } catch {
+      /* not in this project dir */
     }
   }
   return best?.path ?? null;
 }
 
-/**
- * Tail the file and scan backwards for the most recent `permission-mode`
- * entry. Returns the raw `permissionMode` value, or null if not found.
- */
-export function detectModeInFile(path: string): PermissionMode | null {
+function detectModeInFile(path: string): PermissionMode | null {
   let buf: Buffer;
   try {
-    const fd = openForRead(path);
-    if (!fd) return null;
-    const { size } = fd;
-    const readLen = Math.min(size, TAIL_BYTES);
-    buf = Buffer.alloc(readLen);
-    fd.fd.read(buf, 0, readLen, size - readLen);
-    fd.fd.close();
-  } catch {
-    try {
+    const stat = statSync(path);
+    const len = Math.min(stat.size, TAIL_BYTES);
+    if (stat.size > len) {
+      // Read just the tail to keep this cheap on long sessions.
+      const fs = require("node:fs") as typeof import("node:fs");
+      const fd = fs.openSync(path, "r");
+      buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, stat.size - len);
+      fs.closeSync(fd);
+    } else {
       buf = readFileSync(path);
-    } catch {
-      return null;
     }
+  } catch {
+    return null;
   }
   const text = buf.toString("utf8");
   const lines = text.split("\n");
@@ -76,32 +179,35 @@ export function detectModeInFile(path: string): PermissionMode | null {
     if (!line || !line.includes('"permission-mode"')) continue;
     try {
       const entry = JSON.parse(line);
-      if (entry?.type === "permission-mode" && typeof entry.permissionMode === "string") {
+      if (
+        entry?.type === "permission-mode"
+        && typeof entry.permissionMode === "string"
+      ) {
         return entry.permissionMode as PermissionMode;
       }
     } catch {
-      /* malformed tail line — skip */
+      /* malformed tail line, keep scanning */
     }
   }
   return null;
 }
 
-interface FdHandle {
-  fd: {
-    read(buf: Buffer, offset: number, length: number, position: number): void;
-    close(): void;
+export interface DetectedMode {
+  mode: PermissionMode | null;
+  sessionId: string | null;
+  source: "focused" | "fallback" | "none";
+}
+
+export async function detectCurrentMode(): Promise<DetectedMode> {
+  const focused = await findFocusedSession();
+  const chosen = focused ?? fallbackSession();
+  if (!chosen) return { mode: null, sessionId: null, source: "none" };
+  const path = findJsonlForSession(chosen.sessionId);
+  if (!path) return { mode: null, sessionId: chosen.sessionId, source: focused ? "focused" : "fallback" };
+  const mode = detectModeInFile(path);
+  return {
+    mode,
+    sessionId: chosen.sessionId,
+    source: focused ? "focused" : "fallback",
   };
-  size: number;
-}
-
-function openForRead(_path: string): FdHandle | null {
-  // Always use the simpler readFileSync path; if files ever grow huge we can
-  // switch to fs.openSync/readSync. Returning null falls back to that.
-  return null;
-}
-
-export function detectCurrentMode(): PermissionMode | null {
-  const path = findActiveSessionJsonl();
-  if (!path) return null;
-  return detectModeInFile(path);
 }
