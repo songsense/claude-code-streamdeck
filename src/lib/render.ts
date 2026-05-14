@@ -79,6 +79,13 @@ export function tileForCost(cost: number): string {
   });
 }
 
+export function tileForMode(mode: "plan" | "auto"): string {
+  if (mode === "plan") {
+    return buildTile({ caption: "mode", primary: "Plan", color: "#3b82f6", background: "#0b1220" });
+  }
+  return buildTile({ caption: "mode", primary: "Auto", color: "#f59e0b", background: "#1a1206" });
+}
+
 export function tileForTokens(tokens: number, model: string | undefined): string {
   let text: string;
   if (tokens >= 1_000_000) text = `${(tokens / 1_000_000).toFixed(1)}M`;
