@@ -118,13 +118,28 @@ export async function findFocusedSession(): Promise<SessionMeta | null> {
     (s) => s.kind !== "headless" && descendants.has(s.pid),
   );
   if (sessions.length === 0) return null;
-  sessions.sort((a, b) => {
+  // Among multiple descendants, the most-recently-busy one is almost
+  // certainly the session running this very plugin (it's writing tool
+  // results constantly). Drop that one when we have alternatives.
+  let candidates = sessions;
+  if (sessions.length > 1) {
+    const mostRecentBusy = [...sessions]
+      .filter((s) => s.status === "busy")
+      .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
+    if (mostRecentBusy) {
+      const filtered = sessions.filter(
+        (s) => s.sessionId !== mostRecentBusy.sessionId,
+      );
+      if (filtered.length > 0) candidates = filtered;
+    }
+  }
+  candidates.sort((a, b) => {
     const aIdle = a.status === "idle" ? 1 : 0;
     const bIdle = b.status === "idle" ? 1 : 0;
     if (aIdle !== bIdle) return bIdle - aIdle;
     return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
   });
-  return sessions[0]!;
+  return candidates[0]!;
 }
 
 /**

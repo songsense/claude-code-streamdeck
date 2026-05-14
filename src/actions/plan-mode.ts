@@ -7,17 +7,17 @@ import {
   type KeyAction,
 } from "@elgato/streamdeck";
 import { sendSpecialKey } from "../lib/keystroke.js";
-import { tileForMode } from "../lib/render.js";
+import { tileForMode, type DisplayMode } from "../lib/render.js";
 import {
   detectCurrentMode,
   type PermissionMode,
 } from "../lib/session-mode.js";
 
 // Step the Shift+Tab cycle until the focused Claude session's permission-mode
-// event log reports the target mode. Claude Code's actual cycle order is
-// acceptEdits → default → plan → acceptEdits. Update CYCLE if Claude Code
-// reorders or adds a mode — stepUntil adapts automatically.
-const CYCLE = ["acceptEdits", "default", "plan"] as const;
+// event log reports the target mode. Best-current-guess cycle order:
+//   auto → default → acceptEdits → plan → auto
+// If this is wrong, update CYCLE — stepUntil adapts to any ordering.
+const CYCLE = ["auto", "default", "acceptEdits", "plan"] as const;
 type CycleMode = (typeof CYCLE)[number];
 
 const STEP_DELAY_MS = 80;
@@ -26,18 +26,16 @@ const MAX_STEPS = CYCLE.length + 1;
 
 type TargetMode = "plan" | "auto";
 
-function normalize(mode: PermissionMode | null): CycleMode {
-  if (mode === "plan") return "plan";
-  if (mode === "acceptEdits" || mode === "auto") return "acceptEdits";
-  return "default";
+function normalize(mode: PermissionMode | null): CycleMode | null {
+  if (mode === "plan" || mode === "auto" || mode === "acceptEdits" || mode === "default") {
+    return mode;
+  }
+  return null;
 }
 
-function toDisplay(mode: CycleMode): "plan" | "auto" | "default" {
-  return mode === "acceptEdits" ? "auto" : (mode as "plan" | "default");
-}
-
-function targetCycleMode(t: TargetMode): CycleMode {
-  return t === "auto" ? "acceptEdits" : "plan";
+function toDisplay(mode: CycleMode | null): DisplayMode {
+  if (!mode) return "unknown";
+  return mode;
 }
 
 async function stepUntil(from: CycleMode, to: CycleMode): Promise<void> {
@@ -75,11 +73,13 @@ export class PlanMode extends SingletonAction {
   override async onKeyDown(ev: KeyDownEvent): Promise<void> {
     const detected = await detectCurrentMode();
     const current = normalize(detected.mode);
-    // If we're already at default/unknown, default toggle direction is → plan.
-    const targetDisplay: TargetMode = current === "plan" ? "auto" : "plan";
-    const targetCycle = targetCycleMode(targetDisplay);
+    // If detection failed (no session, unknown mode), default the cycle
+    // start to "default" — most user sessions begin there anyway.
+    const from: CycleMode = current ?? "default";
+    const targetDisplay: TargetMode = from === "plan" ? "auto" : "plan";
+    const targetCycle: CycleMode = targetDisplay;
 
-    await stepUntil(current, targetCycle);
+    await stepUntil(from, targetCycle);
 
     if (ev.action.isKey()) {
       await ev.action.setImage(tileForMode(targetDisplay));
@@ -93,9 +93,7 @@ export class PlanMode extends SingletonAction {
 
   private async render(target: KeyAction): Promise<void> {
     const detected = await detectCurrentMode();
-    const display = detected.mode
-      ? toDisplay(normalize(detected.mode))
-      : "unknown";
+    const display = toDisplay(normalize(detected.mode));
     await target.setImage(tileForMode(display));
     await target.setTitle("");
   }

@@ -79,12 +79,17 @@ export function tileForCost(cost: number): string {
   });
 }
 
-export function tileForMode(mode: "plan" | "auto" | "default" | "unknown"): string {
+export type DisplayMode = "plan" | "auto" | "acceptEdits" | "default" | "unknown";
+
+export function tileForMode(mode: DisplayMode): string {
   if (mode === "plan") {
     return buildTile({ caption: "mode", primary: "Plan", color: "#3b82f6", background: "#0b1220" });
   }
   if (mode === "auto") {
     return buildTile({ caption: "mode", primary: "Auto", color: "#f59e0b", background: "#1a1206" });
+  }
+  if (mode === "acceptEdits") {
+    return buildTile({ caption: "mode", primary: "Edits", color: "#22c55e", background: "#0a1410" });
   }
   if (mode === "default") {
     return buildTile({ caption: "mode", primary: "Def", color: "#9ca3af", background: "#111418" });
