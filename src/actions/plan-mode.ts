@@ -14,10 +14,10 @@ import {
 } from "../lib/session-mode.js";
 
 // Step the Shift+Tab cycle until the focused Claude session's permission-mode
-// event log reports the target mode. Best-current-guess cycle order:
-//   auto → default → acceptEdits → plan → auto
-// If this is wrong, update CYCLE — stepUntil adapts to any ordering.
-const CYCLE = ["auto", "default", "acceptEdits", "plan"] as const;
+// event log reports the target mode. Observed cycle order in Claude Code 2.1:
+//   auto → plan → acceptEdits → default → auto
+// Update CYCLE if Claude Code reorders — stepUntil adapts automatically.
+const CYCLE = ["auto", "plan", "acceptEdits", "default"] as const;
 type CycleMode = (typeof CYCLE)[number];
 
 const STEP_DELAY_MS = 80;

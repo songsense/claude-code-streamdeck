@@ -133,13 +133,33 @@ export async function findFocusedSession(): Promise<SessionMeta | null> {
       if (filtered.length > 0) candidates = filtered;
     }
   }
-  candidates.sort((a, b) => {
-    const aIdle = a.status === "idle" ? 1 : 0;
-    const bIdle = b.status === "idle" ? 1 : 0;
-    if (aIdle !== bIdle) return bIdle - aIdle;
-    return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+  // Tiebreaker: TTY mtime. Each claude process owns a TTY device whose
+  // mtime advances on every write. The session in the focused tab will
+  // have the most-recently-written TTY at the moment the user actually
+  // toggles or presses. Beats `updatedAt` which only changes on coarse
+  // status transitions.
+  const withTtyMtime = await Promise.all(
+    candidates.map(async (s) => ({ s, mtime: await ttyMtimeFor(s.pid) })),
+  );
+  withTtyMtime.sort((a, b) => {
+    if (b.mtime !== a.mtime) return b.mtime - a.mtime;
+    return (b.s.updatedAt ?? 0) - (a.s.updatedAt ?? 0);
   });
-  return candidates[0]!;
+  return withTtyMtime[0]!.s;
+}
+
+async function ttyMtimeFor(pid: number): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync("/bin/ps", ["-p", String(pid), "-o", "tty="], {
+      timeout: 1500,
+    });
+    const tty = stdout.trim();
+    if (!tty || tty === "??" || tty === "?") return 0;
+    const path = tty.startsWith("/dev/") ? tty : `/dev/${tty}`;
+    return statSync(path).mtimeMs;
+  } catch {
+    return 0;
+  }
 }
 
 /**
