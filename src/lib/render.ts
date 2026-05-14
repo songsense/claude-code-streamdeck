@@ -79,24 +79,6 @@ export function tileForCost(cost: number): string {
   });
 }
 
-export type DisplayMode = "plan" | "auto" | "acceptEdits" | "default" | "unknown";
-
-export function tileForMode(mode: DisplayMode): string {
-  if (mode === "plan") {
-    return buildTile({ caption: "mode", primary: "Plan", color: "#3b82f6", background: "#0b1220" });
-  }
-  if (mode === "auto") {
-    return buildTile({ caption: "mode", primary: "Auto", color: "#f59e0b", background: "#1a1206" });
-  }
-  if (mode === "acceptEdits") {
-    return buildTile({ caption: "mode", primary: "Edits", color: "#22c55e", background: "#0a1410" });
-  }
-  if (mode === "default") {
-    return buildTile({ caption: "mode", primary: "Def", color: "#9ca3af", background: "#111418" });
-  }
-  return buildTile({ caption: "mode", primary: "—", color: "#6b7280", background: "#111418" });
-}
-
 export function tileForTokens(tokens: number, model: string | undefined): string {
   let text: string;
   if (tokens >= 1_000_000) text = `${(tokens / 1_000_000).toFixed(1)}M`;

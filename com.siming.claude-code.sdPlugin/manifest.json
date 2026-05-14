@@ -100,21 +100,6 @@
       ]
     },
     {
-      "Name": "Plan Mode",
-      "UUID": "com.siming.claude-code.plan-mode",
-      "Tooltip": "Toggle Claude Code between plan and auto-accept modes by stepping the Shift+Tab cycle until the target mode is reached.",
-      "Icon": "imgs/actions/plan-mode/icon",
-      "Controllers": ["Keypad"],
-      "States": [
-        {
-          "Image": "imgs/actions/plan-mode/key",
-          "TitleAlignment": "middle",
-          "FontSize": "13",
-          "Title": "Plan"
-        }
-      ]
-    },
-    {
       "Name": "Usage (5h)",
       "UUID": "com.siming.claude-code.usage-5h",
       "Tooltip": "Claude Code 5-hour quota utilization with reset countdown.",
