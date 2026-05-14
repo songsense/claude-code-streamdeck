@@ -33,8 +33,26 @@ export async function sendKeystroke(
   await execFileAsync("/usr/bin/osascript", ["-e", script], { timeout: 5000 });
 }
 
-export async function sendSpecialKey(key: KeyName): Promise<void> {
+export type Modifier = "shift" | "control" | "option" | "command";
+
+const MODIFIER_PHRASE: Record<Modifier, string> = {
+  shift: "shift down",
+  control: "control down",
+  option: "option down",
+  command: "command down",
+};
+
+function modifierClause(mods: Modifier[]): string {
+  if (mods.length === 0) return "";
+  if (mods.length === 1) return ` using ${MODIFIER_PHRASE[mods[0]!]}`;
+  return ` using {${mods.map((m) => MODIFIER_PHRASE[m]).join(", ")}}`;
+}
+
+export async function sendSpecialKey(
+  key: KeyName,
+  modifiers: Modifier[] = [],
+): Promise<void> {
   const script =
-    `tell application "System Events" to key code ${KEY_CODES[key]}`;
+    `tell application "System Events" to key code ${KEY_CODES[key]}${modifierClause(modifiers)}`;
   await execFileAsync("/usr/bin/osascript", ["-e", script], { timeout: 5000 });
 }
