@@ -3,29 +3,45 @@ import {
   KeyDownEvent,
   SingletonAction,
   WillAppearEvent,
+  WillDisappearEvent,
+  type KeyAction,
 } from "@elgato/streamdeck";
 import { sendSpecialKey } from "../lib/keystroke.js";
 import { tileForMode } from "../lib/render.js";
+import {
+  detectCurrentMode,
+  type PermissionMode,
+} from "../lib/session-mode.js";
 
-// Claude Code's Shift+Tab steps forward through a mode cycle. We track our
-// assumed position in the cycle as the user-visible mode (plan or auto) and
-// keep tapping Shift+Tab until we land on the target. If Claude Code changes
-// its cycle order or adds a mode, update `CYCLE` — no other code change.
-const CYCLE = ["default", "auto", "plan"] as const;
+// Step the Shift+Tab cycle until the active Claude session's session log
+// reports the desired mode. The cycle below mirrors Claude Code's UI:
+// default → acceptEdits (a.k.a. "auto") → plan → default. If Claude Code
+// changes its order or adds a mode, update CYCLE — no other code change.
+const CYCLE = ["default", "acceptEdits", "plan"] as const;
 type CycleMode = (typeof CYCLE)[number];
 
-const STEP_DELAY_MS = 60;
-const MAX_STEPS = CYCLE.length + 1; // safety bound
+const STEP_DELAY_MS = 70;
+const REFRESH_MS = 4_000;
+const MAX_STEPS = CYCLE.length + 1;
 
-type Mode = "plan" | "auto";
-type Settings = { mode?: Mode };
+type TargetMode = "plan" | "auto";
 
-function readMode(raw: unknown): Mode {
-  const m = (raw as Settings | undefined)?.mode;
-  return m === "plan" || m === "auto" ? m : "auto";
+function normalize(mode: PermissionMode | null): CycleMode {
+  if (mode === "plan") return "plan";
+  if (mode === "acceptEdits" || mode === "auto") return "acceptEdits";
+  return "default";
 }
 
-async function stepCycle(from: CycleMode, to: Mode): Promise<void> {
+function toDisplay(mode: CycleMode): "plan" | "auto" | "default" {
+  return mode === "acceptEdits" ? "auto" : (mode as "plan" | "default");
+}
+
+function targetCycleMode(t: TargetMode): CycleMode {
+  return t === "auto" ? "acceptEdits" : "plan";
+}
+
+async function stepUntil(from: CycleMode, to: CycleMode): Promise<void> {
+  if (from === to) return;
   let idx = CYCLE.indexOf(from);
   for (let i = 0; i < MAX_STEPS && CYCLE[idx] !== to; i++) {
     await sendSpecialKey("tab", ["shift"]);
@@ -38,23 +54,47 @@ async function stepCycle(from: CycleMode, to: Mode): Promise<void> {
 
 @action({ UUID: "com.siming.claude-code.plan-mode" })
 export class PlanMode extends SingletonAction {
+  private visible = new Map<string, KeyAction>();
+  private timer: ReturnType<typeof setInterval> | null = null;
+
   override async onWillAppear(ev: WillAppearEvent): Promise<void> {
     if (!ev.action.isKey()) return;
-    const mode = readMode(ev.payload.settings);
-    await ev.action.setImage(tileForMode(mode));
-    await ev.action.setTitle("");
+    this.visible.set(ev.action.id, ev.action);
+    if (!this.timer) this.timer = setInterval(() => this.refreshAll(), REFRESH_MS);
+    await this.render(ev.action);
+  }
+
+  override onWillDisappear(ev: WillDisappearEvent): void {
+    this.visible.delete(ev.action.id);
+    if (this.visible.size === 0 && this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
   }
 
   override async onKeyDown(ev: KeyDownEvent): Promise<void> {
-    const current = readMode(ev.payload.settings);
-    const next: Mode = current === "plan" ? "auto" : "plan";
+    const detected = normalize(detectCurrentMode());
+    const targetDisplay: TargetMode = detected === "plan" ? "auto" : "plan";
+    const targetCycle = targetCycleMode(targetDisplay);
 
-    await stepCycle(current, next);
+    await stepUntil(detected, targetCycle);
 
+    // Optimistically render the target while we wait for the next session-log
+    // poll to confirm — keeps the key feeling responsive.
     if (ev.action.isKey()) {
-      await ev.action.setSettings({ mode: next } satisfies Settings);
-      await ev.action.setImage(tileForMode(next));
+      await ev.action.setImage(tileForMode(targetDisplay));
       await ev.action.setTitle("");
     }
+  }
+
+  private async refreshAll(): Promise<void> {
+    for (const a of this.visible.values()) await this.render(a);
+  }
+
+  private async render(target: KeyAction): Promise<void> {
+    const detected = detectCurrentMode();
+    const display = detected ? toDisplay(normalize(detected)) : "unknown";
+    await target.setImage(tileForMode(display));
+    await target.setTitle("");
   }
 }
