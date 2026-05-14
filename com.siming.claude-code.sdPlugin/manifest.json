@@ -1,0 +1,148 @@
+{
+  "Name": "Claude Code",
+  "Version": "0.1.0.0",
+  "Author": "Siming Song",
+  "Description": "Stream Deck controls for Claude Code: approve/deny permission prompts, 5h usage tile, slash-command shortcuts.",
+  "URL": "https://github.com/anthropics/claude-code",
+  "Icon": "imgs/plugin/icon",
+  "Category": "Claude Code",
+  "CategoryIcon": "imgs/plugin/category-icon",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.5"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "12"
+    }
+  ],
+  "Nodejs": {
+    "Version": "20",
+    "Debug": "enabled"
+  },
+  "Actions": [
+    {
+      "Name": "Approve",
+      "UUID": "com.siming.claude-code.approve",
+      "Tooltip": "Send '1' + Enter to the focused terminal (approve current Claude Code prompt).",
+      "Icon": "imgs/actions/approve/icon",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "imgs/actions/approve/key",
+          "TitleAlignment": "middle",
+          "FontSize": "14",
+          "Title": "Approve"
+        }
+      ]
+    },
+    {
+      "Name": "Deny",
+      "UUID": "com.siming.claude-code.deny",
+      "Tooltip": "Send Escape to the focused terminal (cancel current Claude Code prompt).",
+      "Icon": "imgs/actions/deny/icon",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "imgs/actions/deny/key",
+          "TitleAlignment": "middle",
+          "FontSize": "14",
+          "Title": "Deny"
+        }
+      ]
+    },
+    {
+      "Name": "/compact",
+      "UUID": "com.siming.claude-code.compact",
+      "Tooltip": "Send '/compact' + Enter to the focused terminal.",
+      "Icon": "imgs/actions/compact/icon",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "imgs/actions/compact/key",
+          "TitleAlignment": "middle",
+          "FontSize": "13",
+          "Title": "/compact"
+        }
+      ]
+    },
+    {
+      "Name": "/clear",
+      "UUID": "com.siming.claude-code.clear",
+      "Tooltip": "Send '/clear' + Enter to the focused terminal.",
+      "Icon": "imgs/actions/clear/icon",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "imgs/actions/clear/key",
+          "TitleAlignment": "middle",
+          "FontSize": "13",
+          "Title": "/clear"
+        }
+      ]
+    },
+    {
+      "Name": "Slash Command",
+      "UUID": "com.siming.claude-code.slash-command",
+      "Tooltip": "Send a configurable slash command + Enter to the focused terminal.",
+      "Icon": "imgs/actions/slash-command/icon",
+      "Controllers": ["Keypad"],
+      "PropertyInspectorPath": "ui/slash-command.html",
+      "States": [
+        {
+          "Image": "imgs/actions/slash-command/key",
+          "TitleAlignment": "middle",
+          "FontSize": "12",
+          "Title": "/cmd"
+        }
+      ]
+    },
+    {
+      "Name": "Usage (5h)",
+      "UUID": "com.siming.claude-code.usage-5h",
+      "Tooltip": "Claude Code 5-hour quota utilization with reset countdown.",
+      "Icon": "imgs/actions/usage-5h/icon",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "imgs/actions/usage-5h/key",
+          "TitleAlignment": "top",
+          "FontSize": "10",
+          "Title": ""
+        }
+      ]
+    },
+    {
+      "Name": "Cost (5h window)",
+      "UUID": "com.siming.claude-code.cost-window",
+      "Tooltip": "Estimated cost from local session logs over the last 5 hours.",
+      "Icon": "imgs/actions/cost-window/icon",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "imgs/actions/cost-window/key",
+          "TitleAlignment": "top",
+          "FontSize": "10",
+          "Title": ""
+        }
+      ]
+    },
+    {
+      "Name": "Session Tokens",
+      "UUID": "com.siming.claude-code.session-tokens",
+      "Tooltip": "Token count for the most recently active Claude Code session.",
+      "Icon": "imgs/actions/session-tokens/icon",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "imgs/actions/session-tokens/key",
+          "TitleAlignment": "top",
+          "FontSize": "10",
+          "Title": ""
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "claude-code-streamdeck",
+  "version": "0.1.0",
+  "description": "Stream Deck plugin for Claude Code: approve/deny, usage tile, slash-command keys",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "build": "npm run gen:icons && esbuild src/plugin.ts --bundle --platform=node --target=node20 --format=esm --outfile=com.siming.claude-code.sdPlugin/bin/plugin.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "watch": "esbuild src/plugin.ts --bundle --platform=node --target=node20 --format=esm --outfile=com.siming.claude-code.sdPlugin/bin/plugin.js --watch --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@elgato/streamdeck": "^1.4.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}

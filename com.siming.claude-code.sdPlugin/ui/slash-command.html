@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Slash Command</title>
+    <script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+  </head>
+  <body>
+    <sdpi-item label="Command">
+      <sdpi-textfield
+        setting="text"
+        placeholder="/review"
+        maxlength="200"
+      ></sdpi-textfield>
+    </sdpi-item>
+    <sdpi-item label="Append Enter">
+      <sdpi-checkbox setting="enter" default="true"></sdpi-checkbox>
+    </sdpi-item>
+    <sdpi-item>
+      <small>
+        Sends the text + (optional) Enter to whatever app is focused. Bring
+        the terminal running <code>claude</code> to the front before pressing.
+      </small>
+    </sdpi-item>
+  </body>
+</html>

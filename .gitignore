@@ -1,0 +1,8 @@
+node_modules/
+com.siming.claude-code.sdPlugin/bin/
+com.siming.claude-code.sdPlugin/imgs/
+com.siming.claude-code.sdPlugin/logs/
+*.log
+.DS_Store
+.env
+.env.*
