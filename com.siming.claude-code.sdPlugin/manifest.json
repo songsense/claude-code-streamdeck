@@ -102,7 +102,7 @@
     {
       "Name": "Plan Mode",
       "UUID": "com.siming.claude-code.plan-mode",
-      "Tooltip": "Send Shift+Tab to toggle Claude Code between plan-mode and auto-accept-edits mode.",
+      "Tooltip": "Send Shift+Tab twice to skip 'default' and land on plan or auto-accept mode.",
       "Icon": "imgs/actions/plan-mode/icon",
       "Controllers": ["Keypad"],
       "States": [
