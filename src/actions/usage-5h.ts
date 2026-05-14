@@ -9,7 +9,7 @@ import {
 import { getUsage } from "../lib/usage-api.js";
 import { tileForError, tileForUsagePercent } from "../lib/render.js";
 
-const REFRESH_MS = 30_000;
+const REFRESH_MS = 60_000;
 
 @action({ UUID: "com.siming.claude-code.usage-5h" })
 export class Usage5h extends SingletonAction {

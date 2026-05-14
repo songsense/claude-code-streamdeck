@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile);
 const KEYCHAIN_SERVICE = "Claude Code-credentials";
 const USAGE_ENDPOINT = "https://api.anthropic.com/api/oauth/usage";
 const CACHE_TTL_MS = 60_000;
+const RATE_LIMIT_BACKOFF_MS = 5 * 60_000; // 5 min minimum after a 429
 const REQUEST_TIMEOUT_MS = 8_000;
 
 export interface UsageWindow {
@@ -21,10 +22,21 @@ export interface UsageSnapshot {
   fiveHour?: UsageWindow;
   sevenDay?: UsageWindow;
   fetchedAt: number;
+  validUntil: number; // honor longer TTLs on 429
   error?: string;
 }
 
 let cache: UsageSnapshot | null = null;
+
+function parseRetryAfter(raw: string | string[] | undefined): number | null {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (!v) return null;
+  const secs = parseInt(v, 10);
+  if (Number.isFinite(secs) && secs > 0) return secs * 1000;
+  const dateMs = Date.parse(v);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  return null;
+}
 
 async function readKeychainToken(): Promise<string | null> {
   if (process.platform !== "darwin") return null;
@@ -111,9 +123,17 @@ function fetchUsage(token: string): Promise<UsageSnapshot> {
         res.on("end", () => {
           const fetchedAt = Date.now();
           if (res.statusCode !== 200) {
+            const isRateLimited = res.statusCode === 429;
+            const retryAfterMs = isRateLimited
+              ? parseRetryAfter(res.headers["retry-after"])
+              : null;
+            const ttl = isRateLimited
+              ? Math.max(RATE_LIMIT_BACKOFF_MS, retryAfterMs ?? 0)
+              : CACHE_TTL_MS;
             resolve({
               fetchedAt,
-              error: res.statusCode === 429
+              validUntil: fetchedAt + ttl,
+              error: isRateLimited
                 ? "rate-limited"
                 : `http-${res.statusCode ?? "err"}`,
             });
@@ -123,20 +143,21 @@ function fetchUsage(token: string): Promise<UsageSnapshot> {
             const data = JSON.parse(body) as RawUsage;
             resolve({
               fetchedAt,
+              validUntil: fetchedAt + CACHE_TTL_MS,
               fiveHour: parseWindow(data.five_hour),
               sevenDay: parseWindow(data.seven_day),
             });
           } catch {
-            resolve({ fetchedAt, error: "parse" });
+            resolve({ fetchedAt, validUntil: fetchedAt + CACHE_TTL_MS, error: "parse" });
           }
         });
       },
     );
     req.on("error", () =>
-      resolve({ fetchedAt: Date.now(), error: "network" }));
+      resolve({ fetchedAt: Date.now(), validUntil: Date.now() + CACHE_TTL_MS, error: "network" }));
     req.on("timeout", () => {
       req.destroy();
-      resolve({ fetchedAt: Date.now(), error: "timeout" });
+      resolve({ fetchedAt: Date.now(), validUntil: Date.now() + CACHE_TTL_MS, error: "timeout" });
     });
     req.end();
   });
@@ -146,12 +167,18 @@ export async function getUsage(
   opts: { force?: boolean } = {},
 ): Promise<UsageSnapshot> {
   const now = Date.now();
-  if (!opts.force && cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-    return cache;
+  // Respect rate-limit cache TTL even on force-refresh — there is no value in
+  // burning another 429 to update the same error tile.
+  if (cache && now < cache.validUntil) {
+    if (!opts.force || cache.error === "rate-limited") return cache;
   }
   const token = await readAccessToken();
   if (!token) {
-    const snap: UsageSnapshot = { fetchedAt: now, error: "no-token" };
+    const snap: UsageSnapshot = {
+      fetchedAt: now,
+      validUntil: now + CACHE_TTL_MS,
+      error: "no-token",
+    };
     cache = snap;
     return snap;
   }
