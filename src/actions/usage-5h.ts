@@ -42,11 +42,16 @@ export class Usage5h extends SingletonAction {
   private async render(target: KeyAction, opts: { force: boolean }): Promise<void> {
     const usage = await getUsage({ force: opts.force });
     let image: string;
-    if (usage.error) {
+    if (usage.fiveHour) {
+      // API returns utilization as a 0-100 percentage, not a 0-1 fraction.
+      // `stale` is set when this is cached data served after a failed refresh.
+      image = tileForUsagePercent(
+        usage.fiveHour.utilization,
+        usage.fiveHour.resetsAt,
+        usage.stale === true,
+      );
+    } else if (usage.error) {
       image = tileForError(usage.error);
-    } else if (usage.fiveHour) {
-      // API already returns utilization as a 0-100 percentage, not a 0-1 fraction.
-      image = tileForUsagePercent(usage.fiveHour.utilization, usage.fiveHour.resetsAt);
     } else {
       image = tileForError("no data");
     }

@@ -44,6 +44,7 @@ export function buildTile(opts: TileOpts): string {
 export function tileForUsagePercent(
   pct: number,
   resetsAtMs: number | undefined,
+  stale = false,
 ): string {
   const color = colorForPct(pct);
   let countdown = "";
@@ -54,10 +55,12 @@ export function tileForUsagePercent(
     countdown = h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
   return buildTile({
-    caption: "5h",
+    // A trailing dot signals the % is from cache (API unreachable / throttled).
+    // The countdown stays accurate either way — resetsAt is an absolute time.
+    caption: stale ? "5h ·" : "5h",
     primary: `${Math.round(pct)}%`,
     secondary: countdown || undefined,
-    color,
+    color: stale ? "#6b7280" : color,
   });
 }
 

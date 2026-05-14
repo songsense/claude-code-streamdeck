@@ -1,8 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFileSync, existsSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+} from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import * as https from "node:https";
 
 const execFileAsync = promisify(execFile);
@@ -11,7 +16,15 @@ const KEYCHAIN_SERVICE = "Claude Code-credentials";
 const USAGE_ENDPOINT = "https://api.anthropic.com/api/oauth/usage";
 const CACHE_TTL_MS = 60_000;
 const RATE_LIMIT_BACKOFF_MS = 5 * 60_000; // 5 min minimum after a 429
+const ERROR_BACKOFF_MS = 60_000; // shorter backoff for transient errors
 const REQUEST_TIMEOUT_MS = 8_000;
+const DISK_CACHE_PATH = join(
+  homedir(),
+  "Library",
+  "Caches",
+  "com.siming.claude-code",
+  "usage-cache.json",
+);
 
 export interface UsageWindow {
   utilization: number;
@@ -22,11 +35,43 @@ export interface UsageSnapshot {
   fiveHour?: UsageWindow;
   sevenDay?: UsageWindow;
   fetchedAt: number;
-  validUntil: number; // honor longer TTLs on 429
   error?: string;
+  /** true when the data is served from cache after a failed/blocked refresh */
+  stale?: boolean;
 }
 
-let cache: UsageSnapshot | null = null;
+// Last *successful* snapshot — the value we fall back to on any failure.
+let lastGood: UsageSnapshot | null = null;
+// Earliest time we're allowed to hit the API again (rate-limit / error backoff).
+let nextFetchAllowedAt = 0;
+let diskLoaded = false;
+
+function loadDiskCache(): void {
+  if (diskLoaded) return;
+  diskLoaded = true;
+  try {
+    if (!existsSync(DISK_CACHE_PATH)) return;
+    const data = JSON.parse(readFileSync(DISK_CACHE_PATH, "utf8"));
+    if (
+      data
+      && typeof data.fetchedAt === "number"
+      && (data.fiveHour || data.sevenDay)
+    ) {
+      lastGood = data as UsageSnapshot;
+    }
+  } catch {
+    // corrupt cache — ignore
+  }
+}
+
+function saveDiskCache(snap: UsageSnapshot): void {
+  try {
+    mkdirSync(dirname(DISK_CACHE_PATH), { recursive: true });
+    writeFileSync(DISK_CACHE_PATH, JSON.stringify(snap), "utf8");
+  } catch {
+    // best-effort — a missing cache just means an extra API call later
+  }
+}
 
 function parseRetryAfter(raw: string | string[] | undefined): number | null {
   const v = Array.isArray(raw) ? raw[0] : raw;
@@ -102,7 +147,13 @@ function parseWindow(
   return { utilization: u, resetsAt: r };
 }
 
-function fetchUsage(token: string): Promise<UsageSnapshot> {
+interface FetchResult {
+  snapshot?: UsageSnapshot; // present on HTTP 200
+  error?: string; // present on failure
+  backoffMs: number; // how long before we should try again
+}
+
+function fetchUsage(token: string): Promise<FetchResult> {
   return new Promise((resolve) => {
     const url = new URL(USAGE_ENDPOINT);
     const req = https.request(
@@ -127,62 +178,81 @@ function fetchUsage(token: string): Promise<UsageSnapshot> {
             const retryAfterMs = isRateLimited
               ? parseRetryAfter(res.headers["retry-after"])
               : null;
-            const ttl = isRateLimited
-              ? Math.max(RATE_LIMIT_BACKOFF_MS, retryAfterMs ?? 0)
-              : CACHE_TTL_MS;
             resolve({
-              fetchedAt,
-              validUntil: fetchedAt + ttl,
               error: isRateLimited
                 ? "rate-limited"
                 : `http-${res.statusCode ?? "err"}`,
+              backoffMs: isRateLimited
+                ? Math.max(RATE_LIMIT_BACKOFF_MS, retryAfterMs ?? 0)
+                : ERROR_BACKOFF_MS,
             });
             return;
           }
           try {
             const data = JSON.parse(body) as RawUsage;
             resolve({
-              fetchedAt,
-              validUntil: fetchedAt + CACHE_TTL_MS,
-              fiveHour: parseWindow(data.five_hour),
-              sevenDay: parseWindow(data.seven_day),
+              snapshot: {
+                fetchedAt,
+                fiveHour: parseWindow(data.five_hour),
+                sevenDay: parseWindow(data.seven_day),
+              },
+              backoffMs: CACHE_TTL_MS,
             });
           } catch {
-            resolve({ fetchedAt, validUntil: fetchedAt + CACHE_TTL_MS, error: "parse" });
+            resolve({ error: "parse", backoffMs: ERROR_BACKOFF_MS });
           }
         });
       },
     );
-    req.on("error", () =>
-      resolve({ fetchedAt: Date.now(), validUntil: Date.now() + CACHE_TTL_MS, error: "network" }));
+    req.on("error", () => resolve({ error: "network", backoffMs: ERROR_BACKOFF_MS }));
     req.on("timeout", () => {
       req.destroy();
-      resolve({ fetchedAt: Date.now(), validUntil: Date.now() + CACHE_TTL_MS, error: "timeout" });
+      resolve({ error: "timeout", backoffMs: ERROR_BACKOFF_MS });
     });
     req.end();
   });
 }
 
+/** Return lastGood marked stale, or a bare error snapshot if we have nothing. */
+function fallback(error: string): UsageSnapshot {
+  if (lastGood) return { ...lastGood, stale: true, error };
+  return { fetchedAt: Date.now(), error };
+}
+
 export async function getUsage(
   opts: { force?: boolean } = {},
 ): Promise<UsageSnapshot> {
+  loadDiskCache();
   const now = Date.now();
-  // Respect rate-limit cache TTL even on force-refresh — there is no value in
-  // burning another 429 to update the same error tile.
-  if (cache && now < cache.validUntil) {
-    if (!opts.force || cache.error === "rate-limited") return cache;
+
+  // Fresh successful data — serve it without touching the network.
+  if (
+    !opts.force
+    && lastGood
+    && now - lastGood.fetchedAt < CACHE_TTL_MS
+  ) {
+    return lastGood;
   }
+
+  // In backoff after a recent failure — don't hammer the API, serve stale.
+  if (now < nextFetchAllowedAt) {
+    return fallback("backoff");
+  }
+
   const token = await readAccessToken();
   if (!token) {
-    const snap: UsageSnapshot = {
-      fetchedAt: now,
-      validUntil: now + CACHE_TTL_MS,
-      error: "no-token",
-    };
-    cache = snap;
-    return snap;
+    nextFetchAllowedAt = now + ERROR_BACKOFF_MS;
+    return fallback("no-token");
   }
-  const snap = await fetchUsage(token);
-  cache = snap;
-  return snap;
+
+  const result = await fetchUsage(token);
+  nextFetchAllowedAt = Date.now() + result.backoffMs;
+
+  if (result.snapshot) {
+    lastGood = result.snapshot;
+    saveDiskCache(result.snapshot);
+    return result.snapshot;
+  }
+
+  return fallback(result.error ?? "unknown");
 }
