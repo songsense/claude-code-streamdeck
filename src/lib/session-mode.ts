@@ -103,8 +103,12 @@ async function getDescendantPids(rootPid: number): Promise<Set<number>> {
 
 /**
  * Pick the Claude session whose PID is a descendant of the frontmost app.
- * If multiple match (e.g. multiple terminal tabs), choose the most-recently
- * updated. Returns null if none match.
+ * Tiebreak when multiple match (multiple tabs running `claude`):
+ *   1. Prefer "idle" status — the busy session is the one running tools
+ *      (very likely the conversation invoking this very plugin), not the
+ *      one the user wants to toggle.
+ *   2. Among matches with the same status, prefer most-recently-updated.
+ * Returns null if no descendant matches a known session.
  */
 export async function findFocusedSession(): Promise<SessionMeta | null> {
   const frontPid = await getFrontmostPid();
@@ -114,7 +118,12 @@ export async function findFocusedSession(): Promise<SessionMeta | null> {
     (s) => s.kind !== "headless" && descendants.has(s.pid),
   );
   if (sessions.length === 0) return null;
-  sessions.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  sessions.sort((a, b) => {
+    const aIdle = a.status === "idle" ? 1 : 0;
+    const bIdle = b.status === "idle" ? 1 : 0;
+    if (aIdle !== bIdle) return bIdle - aIdle;
+    return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+  });
   return sessions[0]!;
 }
 
